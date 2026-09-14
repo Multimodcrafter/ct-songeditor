@@ -4,7 +4,8 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm run build && node scripts/dev.mjs",
+    "test": "node --test test/*.test.*",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "pages:dev": "npm run build && wrangler pages dev",

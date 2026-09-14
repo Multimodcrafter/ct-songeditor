@@ -30,8 +30,8 @@ export default function SongBrowser({
       <section className="browser-section song-section">
         <div className="section-heading">
           <div>
-            <span className="eyebrow">Library</span>
-            <h2>Songs</h2>
+            <span className="eyebrow">Bibliothek</span>
+            <h2>Lieder</h2>
           </div>
           <span className="count-badge">{songs.length}</span>
         </div>
@@ -39,13 +39,13 @@ export default function SongBrowser({
           className="search-input"
           value={query}
           onChange={(event) => onQueryChange(event.target.value)}
-          placeholder="Filter loaded songs…"
-          aria-label="Filter songs"
+          placeholder="Geladene Lieder filtern …"
+          aria-label="Lieder filtern"
         />
         <div className="list song-list">
-          {loadingSongs ? <div className="empty-state">Loading songs…</div> : null}
+          {loadingSongs ? <div className="empty-state">Lieder werden geladen …</div> : null}
           {!loadingSongs && songs.length === 0 ? (
-            <div className="empty-state">No songs loaded.</div>
+            <div className="empty-state">Keine Lieder geladen.</div>
           ) : null}
           {songs.map((song) => (
             <button
@@ -56,7 +56,7 @@ export default function SongBrowser({
             >
               <span className="row-title">{song.name}</span>
               <span className="row-meta">
-                {song.category?.nameTranslated || song.category?.name || 'Uncategorized'}
+                {song.category?.nameTranslated || song.category?.name || 'Ohne Kategorie'}
               </span>
             </button>
           ))}
@@ -66,18 +66,18 @@ export default function SongBrowser({
       <section className="browser-section arrangement-section">
         <div className="section-heading compact">
           <div>
-            <span className="eyebrow">Selected song</span>
+            <span className="eyebrow">Ausgewähltes Lied</span>
             <h2>Arrangements</h2>
           </div>
           <span className="count-badge">{arrangements.length}</span>
         </div>
         <div className="list arrangement-list">
-          {loadingArrangements ? <div className="empty-state">Loading arrangements…</div> : null}
+          {loadingArrangements ? <div className="empty-state">Arrangements werden geladen …</div> : null}
           {!loadingArrangements && selectedSongId === null ? (
-            <div className="empty-state">Select a song to see arrangements.</div>
+            <div className="empty-state">Wähle ein Lied, um seine Arrangements zu sehen.</div>
           ) : null}
           {!loadingArrangements && selectedSongId !== null && arrangements.length === 0 ? (
-            <div className="empty-state">This song has no arrangements.</div>
+            <div className="empty-state">Dieses Lied hat keine Arrangements.</div>
           ) : null}
           {arrangements.map((arrangement) => (
             <button
@@ -88,12 +88,12 @@ export default function SongBrowser({
             >
               <span className="row-title arrangement-title">
                 {arrangement.name}
-                {arrangement.isDefault ? <span className="tag">Default</span> : null}
+                {arrangement.isDefault ? <span className="tag">Standard</span> : null}
               </span>
               <span className="row-meta">
                 {[arrangement.key, arrangement.tempo ? `${arrangement.tempo} BPM` : null]
                   .filter(Boolean)
-                  .join(' · ') || 'No key / tempo'}
+                  .join(' · ') || 'Keine Tonart / kein Tempo'}
               </span>
             </button>
           ))}

@@ -1,48 +1,29 @@
-import { FormEvent, useEffect, useState } from 'react';
 import { CHURCHTOOLS_ORIGIN } from '../api/churchtools';
 
-export type ConnectionValues = {
-  loginToken: string;
-};
-
 type Props = {
-  values: ConnectionValues;
-  onConnect: (values: ConnectionValues) => void;
+  authenticated: boolean;
+  configured: boolean;
   busy: boolean;
+  onLogin: () => void;
+  onLogout: () => void;
 };
 
-export default function ConnectionPanel({ values, onConnect, busy }: Props) {
-  const [loginToken, setLoginToken] = useState(values.loginToken);
-
-  useEffect(() => {
-    setLoginToken(values.loginToken);
-  }, [values.loginToken]);
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    onConnect({ loginToken });
-  }
-
+export default function ConnectionPanel({ authenticated, configured, busy, onLogin, onLogout }: Props) {
   return (
-    <form className="connection-panel" onSubmit={submit}>
-      <div className="connection-target" aria-label="ChurchTools target">
-        <span>ChurchTools</span>
+    <div className="connection-panel">
+      <div className="connection-target" aria-label="ChurchTools-Instanz">
+        <span>{authenticated ? 'Angemeldet bei ChurchTools' : 'ChurchTools'}</span>
         <strong>{CHURCHTOOLS_ORIGIN.replace('https://', '')}</strong>
       </div>
-      <div className="field grow">
-        <label htmlFor="login-token">Login token</label>
-        <input
-          id="login-token"
-          type="password"
-          value={loginToken}
-          onChange={(event) => setLoginToken(event.target.value)}
-          placeholder="ChurchTools login token"
-          autoComplete="off"
-        />
-      </div>
-      <button className="primary" type="submit" disabled={busy || !loginToken.trim()}>
-        {busy ? 'Connecting…' : 'Connect'}
+      {!configured && !busy ? <span className="connection-status">Die Anmeldung wird noch eingerichtet.</span> : null}
+      <button
+        className={authenticated ? 'secondary' : 'primary'}
+        type="button"
+        onClick={authenticated ? onLogout : onLogin}
+        disabled={busy || (!authenticated && !configured)}
+      >
+        {busy ? 'Bitte warten …' : authenticated ? 'Abmelden' : 'Mit ChurchTools anmelden'}
       </button>
-    </form>
+    </div>
   );
 }

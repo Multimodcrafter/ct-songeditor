@@ -1,27 +1,24 @@
-import { groupAlternatingLanguages, type SonBeamerSlide } from '../lib/sonbeamer';
+import { groupAlternatingLanguages, orderSlides, type SongBeamerSlide } from '../lib/songbeamer';
 
 type Props = {
-  slides: SonBeamerSlide[];
+  slides: SongBeamerSlide[];
   order: string[];
   langCount: number;
 };
 
 export default function SlidePreview({ slides, order, langCount }: Props) {
-  const byLabel = new Map(slides.map((slide) => [slide.label, slide]));
-  const orderedSlides = order.length
-    ? order.map((label) => byLabel.get(label)).filter((slide): slide is SonBeamerSlide => Boolean(slide))
-    : slides;
+  const orderedSlides = orderSlides(slides, order);
 
   return (
     <div className="preview-grid">
       {orderedSlides.length === 0 ? (
-        <div className="empty-state preview-empty">No slides to preview.</div>
+        <div className="empty-state preview-empty">Keine Folien für die Vorschau.</div>
       ) : null}
       {orderedSlides.map((slide, index) => (
         <article className="slide-card" key={`${slide.id}-${index}`}>
           <div className="slide-toolbar">
-            <span>Slide {index + 1}</span>
-            <strong>{slide.label}</strong>
+            <span>Folie {index + 1}</span>
+            <strong>{slide.label || 'Ohne Versmarkierung'}</strong>
           </div>
           <div className="slide-screen">
             {groupAlternatingLanguages(slide.lines, langCount).map((group, groupIndex) => {
@@ -30,7 +27,7 @@ export default function SlidePreview({ slides, order, langCount }: Props) {
                 <div className="translation-group" key={groupIndex}>
                   {group.map((line, languageIndex) => (
                     <div className={`preview-line language-${languageIndex + 1}`} key={`${languageIndex}-${line}`}>
-                      {langCount > 1 ? <span className="language-marker">L{languageIndex + 1}</span> : null}
+                      {langCount > 1 ? <span className="language-marker" aria-label={`Sprache ${languageIndex + 1}`}>S{languageIndex + 1}</span> : null}
                       <span>{line}</span>
                     </div>
                   ))}

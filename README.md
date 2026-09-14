@@ -1,6 +1,6 @@
-# ChurchTools SonBeamer Song Editor
+# ChurchTools SongBeamer Song Editor
 
-Standalone React + TypeScript frontend for browsing the song library at **nl.church.tools**, selecting arrangements, downloading `.sng` files, editing lyrics/slide boundaries and verse order, previewing slides, and replacing the arrangement's SonBeamer file.
+Standalone React + TypeScript frontend for browsing the song library at **nl.church.tools**, selecting arrangements, downloading `.sng` files, editing lyrics/slide boundaries and verse order, previewing slides, and replacing the arrangement's SongBeamer file.
 
 The application is designed to be hosted independently from ChurchTools. Cloudflare Pages serves the static frontend and a small Pages Function proxies authenticated requests to `https://nl.church.tools`, so the browser does not depend on ChurchTools CORS settings.
 
@@ -8,10 +8,10 @@ The application is designed to be hosted independently from ChurchTools. Cloudfl
 
 ```text
 Browser
-  │ same-origin request + Authorization: Login <token>
+  │ same-origin request + encrypted HttpOnly session cookie
   ▼
 Cloudflare Pages /ct-proxy/*
-  │ server-side proxy
+  │ server-side proxy + Authorization: Bearer <access_token>
   ▼
 https://nl.church.tools/*
 ```
@@ -30,23 +30,73 @@ The upload-first sequence deliberately favors data safety. If cleanup fails, Chu
 
 ## Authentication
 
-Because the app is hosted independently of ChurchTools, it uses a ChurchTools Login Token rather than relying on ChurchTools browser cookies.
+The German UI offers **Mit ChurchTools anmelden**. The Pages Functions run an
+OAuth authorization-code flow against `https://nl.church.tools/oauth/authorize`
+and `/oauth/access_token`, requesting the `api` scope. API access through OAuth
+requires ChurchTools **3.135 or later**. See the
+[ChurchTools release announcement](https://blog.church.tools/blog/v3-135-formatieren-erwaehnen-neue-wiki-suche-und-gruppen-verbesserungen/).
 
-The user enters the token in the UI. The frontend stores it in `sessionStorage`, sends it only to the same-origin `/ct-proxy/*` route, and the Pages Function forwards it to `nl.church.tools` as:
+Login state and a PKCE verifier are generated on the server. The callback validates
+the state and redirect URI before exchanging the code. Access tokens are kept in
+an AES-GCM encrypted `HttpOnly`, `SameSite=Lax` cookie (`Secure` on HTTPS), and the
+proxy forwards them as `Authorization: Bearer <access_token>`. No credentials are
+exposed to frontend JavaScript. Mutating routes require the same-origin `Origin`
+header; upstream cookies are stripped and cross-origin redirects are rejected.
 
-```text
-Authorization: Login <token>
-```
+Sessions expire with the access token, after at most eight hours. The user is
+prompted to log in again when the session expires; tokens are not refreshed
+automatically. **Abmelden** clears the editor's session, leaving the ChurchTools
+website login unchanged.
 
-The token is not compiled into the site, stored in Cloudflare configuration, or written to persistent browser storage by this application.
+### One-time OAuth setup
 
-## SonBeamer behavior
+1. In `nl.church.tools`, open **Systemeinstellungen → Login** and add an OAuth
+   client named **SongBeamer-Liededitor**. Copy its client identifier.
+2. Register each exact callback URL you use:
+   - `http://localhost:5173/auth/callback` for `npm run dev`;
+   - `http://localhost:8788/auth/callback` for `npm run pages:dev`;
+   - `https://<your-editor-domain>/auth/callback` for production.
+   Use `localhost` consistently locally; `127.0.0.1` is a different origin.
+3. Grant the intended users **Über ChurchTools-Konto in Drittsystem einloggen**
+   (`Login to External System`) for this client, along with the ChurchTools song
+   and arrangement-file permissions they need.
+4. Set `CHURCHTOOLS_CLIENT_ID` and `SESSION_SECRET` for the Pages Functions.
+   `SESSION_SECRET` must contain at least 32 random characters. Generate one with:
+
+   ```bash
+   node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+   ```
+
+5. `CHURCHTOOLS_CLIENT_SECRET` is optional. Set it only if configured for this
+   client; it is used exclusively in the server-side token exchange. ChurchTools
+   currently does not require a client secret. See the
+   [official OAuth setup guide](https://churchtools.academy/en/help/system-settings/oauth-login-systemsettings/oauth-authentication-with-churchtools/).
+
+For local development, copy `.dev.vars.example` to `.dev.vars` and fill in the
+values. `.dev.vars` is ignored by Git. In Cloudflare Pages, configure these values
+in the project's runtime variables/secrets for the relevant environment; mark
+`SESSION_SECRET` and any `CHURCHTOOLS_CLIENT_SECRET` as secrets. Do not prefix them
+with `VITE_`. Restart the local development servers after changing `.dev.vars`.
+
+Until configured, the editor shows that login is not yet available. Real login
+requires the registered ChurchTools client; automated tests use a mocked provider.
+
+## SongBeamer behavior
 
 - Existing metadata lines are preserved.
 - `#VerseOrder=` is updated from the editable list.
 - UTF-8 BOM and LF/CRLF line endings are preserved from the source file.
 - Slides are separated by a line containing `---`.
-- The first non-empty line in each slide block is treated as the slide/verse label.
+- Built-in SongBeamer verse markers such as `Vers 1`, `Verse 1`, `Refrain`, and
+  `Chorus` label a slide. Custom labels use `$$M=Name`.
+- Unmarked slides inherit the preceding marked slide's label without losing any
+  lyric lines. Slides before the first marker remain unlabeled; they are shown in
+  file order when no verse order is set, and otherwise produce a warning.
+- Every occurrence of a label in the verse order expands **all** slides with that
+  label in file order, including continuations. Repeated labels are valid.
+- Verse-order dropdowns offer each available label once. References to removed
+  labels remain visible as missing until changed or removed.
+- Preview text is horizontally centered and aligned to the top of each slide.
 - `#LangCount=N` controls multilingual preview. For `N > 1`, non-empty lyric lines are displayed as alternating language lines in groups of `N`.
 
 ## Local development
@@ -57,6 +107,7 @@ locked dependencies, and run Vite:
 ```bash
 nix develop
 npm ci
+# Configure .dev.vars as described above, then:
 npm run dev
 ```
 
@@ -74,7 +125,10 @@ To check the production build from the development environment:
 nix develop --command npm run build
 ```
 
-For fast local development, Vite proxies `/ct-proxy/*` directly to `https://nl.church.tools` using the same URL layout as production.
+`npm run dev` starts Vite at `http://localhost:5173` and Wrangler at port 8788.
+Vite proxies `/auth/*` and `/ct-proxy/*` to the real Pages Functions, so local
+development uses the same OAuth and session handling as production. React edits
+use Vite's hot reload. Both processes stop together on Ctrl+C.
 
 To test the actual Cloudflare Pages Function locally:
 
@@ -83,6 +137,11 @@ npm run pages:dev
 ```
 
 That command builds the frontend and starts `wrangler pages dev` using `wrangler.jsonc`.
+Open `http://localhost:8788` and use its registered callback URL. Do not run it
+alongside `npm run dev`, which already uses port 8788.
+
+Run the regression tests with `npm test`. `npm run preview` previews static build
+assets only; use one of the commands above for authentication and API requests.
 
 ## Deploy to Cloudflare Pages
 
@@ -94,9 +153,12 @@ Push this directory to GitHub or GitLab, create a Cloudflare Pages project from 
 - **Build output directory:** `dist`
 - **Root directory:** repository root
 
-Keep the `functions/` directory at the repository root. Cloudflare detects Pages Functions from that directory. `public/_routes.json` ensures only `/ct-proxy/*` invokes the Function; static asset requests remain static.
+Keep the `functions/` and `server/` directories at the repository root. Cloudflare
+detects Pages Functions from `functions/`. `public/_routes.json` routes `/auth/*`
+and `/ct-proxy/*` to Functions; static asset requests remain static.
 
-No environment variables or secrets are required for the default `nl.church.tools` deployment.
+Configure the OAuth runtime variables/secrets and production callback URI before
+using login, as described above.
 
 ### Option 2: Wrangler
 
@@ -114,7 +176,7 @@ For later deployments, only `npm run deploy` is needed.
 
 ## Production notes
 
-- The proxy rejects requests without a `Login` authorization header.
+- The proxy rejects requests without a valid encrypted session cookie.
 - The upstream host is hardcoded to `https://nl.church.tools`.
 - Proxy responses are marked `Cache-Control: no-store` and `Set-Cookie` is stripped.
 - Static security headers are defined in `public/_headers`.

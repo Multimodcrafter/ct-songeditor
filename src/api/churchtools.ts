@@ -55,31 +55,21 @@ type ApiEnvelope<T> = {
   };
 };
 
-export type ChurchToolsConfig = {
-  loginToken: string;
-};
-
 export const CHURCHTOOLS_ORIGIN = 'https://nl.church.tools';
 const PROXY_BASE = '/ct-proxy';
 
 export class ChurchToolsApi {
-  private readonly token: string;
+  constructor(private readonly onSessionExpired: () => void = () => {}) {}
 
-  constructor(config: ChurchToolsConfig) {
-    this.token = config.loginToken.trim();
-  }
-
-  private authHeaders(): HeadersInit {
-    return this.token ? { Authorization: `Login ${this.token}` } : {};
+  private checkAuthentication(response: Response) {
+    if (response.status === 401) {
+      this.onSessionExpired();
+      throw new Error('Deine Anmeldung ist abgelaufen. Bitte melde dich erneut bei ChurchTools an.');
+    }
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!this.token) {
-      throw new Error('Enter a ChurchTools login token to connect to nl.church.tools.');
-    }
-
     const headers = new Headers(init.headers);
-    headers.set('Authorization', `Login ${this.token}`);
     if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
     }
@@ -90,10 +80,10 @@ export class ChurchToolsApi {
       headers,
     });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`ChurchTools API ${response.status}: ${body || response.statusText}`);
-    }
+    this.checkAuthentication(response);
+    if (!response.ok) throw new Error(response.status === 403
+      ? 'Du hast für diese Aktion keine Berechtigung in ChurchTools.'
+      : `Die ChurchTools-Anfrage ist fehlgeschlagen (Status ${response.status}). Bitte versuche es erneut.`);
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
@@ -133,21 +123,17 @@ export class ChurchToolsApi {
   }
 
   async downloadFile(file: ChurchToolsFile): Promise<ArrayBuffer> {
-    if (!this.token) {
-      throw new Error('Enter a ChurchTools login token to download arrangement files.');
-    }
-
     const upstream = new URL(file.fileUrl, CHURCHTOOLS_ORIGIN);
     if (upstream.origin !== CHURCHTOOLS_ORIGIN) {
-      throw new Error(`Refusing to download a file from unexpected origin ${upstream.origin}.`);
+      throw new Error(`Download von einer unerwarteten Adresse abgelehnt: ${upstream.origin}.`);
     }
 
     const response = await fetch(`${PROXY_BASE}${upstream.pathname}${upstream.search}`, {
       credentials: 'same-origin',
-      headers: this.authHeaders(),
     });
+    this.checkAuthentication(response);
     if (!response.ok) {
-      throw new Error(`Could not download ${file.name}: ${response.status} ${response.statusText}`);
+      throw new Error(`Die Datei „${file.name}“ konnte nicht heruntergeladen werden (Status ${response.status}).`);
     }
     return response.arrayBuffer();
   }
@@ -166,7 +152,7 @@ export class ChurchToolsApi {
       { method: 'POST', body: data },
     );
     const uploaded = result.data[0];
-    if (!uploaded) throw new Error('ChurchTools did not return the uploaded file.');
+    if (!uploaded) throw new Error('ChurchTools hat die hochgeladene Datei nicht zurückgegeben.');
     return uploaded;
   }
 

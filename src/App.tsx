@@ -7,27 +7,29 @@ import {
   type ChurchToolsFile,
   type Song,
 } from './api/churchtools';
-import ConnectionPanel, { type ConnectionValues } from './components/ConnectionPanel';
+import ConnectionPanel from './components/ConnectionPanel';
+import { consumeAuthError, getSession, login, logout, type AuthSession } from './api/auth';
 import SongBrowser from './components/SongBrowser';
 import SongEditor from './components/SongEditor';
-import { decodeSonBeamer, serializeSonBeamer, type ParsedSonBeamer } from './lib/sonbeamer';
+import { decodeSongBeamer, serializeSongBeamer, type ParsedSongBeamer } from './lib/songbeamer';
 
 type EditorState = {
   file: ChurchToolsFile;
-  document: ParsedSonBeamer;
+  document: ParsedSongBeamer;
   lyricsText: string;
   verseOrder: string[];
   originalLyricsText: string;
   originalVerseOrder: string[];
 };
 
-const initialToken = sessionStorage.getItem('churchtools-login-token') || '';
+const initialAuthError = consumeAuthError();
+// Remove credentials left by the former manual-token login.
+sessionStorage.removeItem('churchtools-login-token');
 
 export default function App() {
-  const [connection, setConnection] = useState<ConnectionValues>({
-    loginToken: initialToken,
-  });
-  const [api, setApi] = useState(() => new ChurchToolsApi(connection));
+  const [auth, setAuth] = useState<AuthSession>({ authenticated: false, configured: false });
+  const [authBusy, setAuthBusy] = useState(true);
+  const [api] = useState(() => new ChurchToolsApi(() => setAuth((current) => ({ ...current, authenticated: false }))));
   const [songs, setSongs] = useState<Song[]>([]);
   const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [arrangements, setArrangements] = useState<Arrangement[]>([]);
@@ -39,7 +41,7 @@ export default function App() {
   const [loadingEditor, setLoadingEditor] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialAuthError);
   const messageTimer = useRef<number | null>(null);
 
   const dirty = Boolean(
@@ -61,12 +63,20 @@ export default function App() {
   }, [filter, songs]);
 
   useEffect(() => {
-    if (initialToken) void loadSongs(api);
+    let active = true;
+    void getSession().then(async (current) => {
+      if (!active) return;
+      setAuth(current);
+      if (current.authenticated) await loadSongs();
+    }).catch((err) => {
+      if (active) setError(toErrorMessage(err));
+    }).finally(() => {
+      if (active) setAuthBusy(false);
+    });
     return () => {
+      active = false;
       if (messageTimer.current) window.clearTimeout(messageTimer.current);
     };
-    // Initial load intentionally uses the restored connection settings.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function notify(text: string) {
@@ -92,25 +102,31 @@ export default function App() {
     }
   }
 
-  async function connect(values: ConnectionValues) {
-    const normalized: ConnectionValues = {
-      loginToken: values.loginToken.trim(),
-    };
-    if (normalized.loginToken) sessionStorage.setItem('churchtools-login-token', normalized.loginToken);
-    else sessionStorage.removeItem('churchtools-login-token');
+  async function signIn() {
+    if (dirty && !window.confirm('Nicht gespeicherte Änderungen verwerfen und zur Anmeldung wechseln?')) return;
+    setAuthBusy(true);
+    try { await login(); } catch (err) { setError(toErrorMessage(err)); setAuthBusy(false); }
+  }
 
-    const client = new ChurchToolsApi(normalized);
-    setConnection(normalized);
-    setApi(client);
-    setSelectedSong(null);
-    setSelectedArrangement(null);
-    setArrangements([]);
-    setEditor(null);
-    await loadSongs(client);
+  async function signOut() {
+    if (dirty && !window.confirm('Nicht gespeicherte Änderungen verwerfen und abmelden?')) return;
+    setAuthBusy(true);
+    try {
+      await logout();
+      setAuth((current) => ({ ...current, authenticated: false }));
+      setSongs([]);
+      setSelectedSong(null);
+      setSelectedArrangement(null);
+      setArrangements([]);
+      setEditor(null);
+      setError(null);
+      setMessage(null);
+    } catch (err) { setError(toErrorMessage(err)); }
+    finally { setAuthBusy(false); }
   }
 
   async function selectSong(song: Song) {
-    if (dirty && !window.confirm('Discard unsaved song changes?')) return;
+    if (dirty && !window.confirm('Nicht gespeicherte Änderungen verwerfen?')) return;
     setSelectedSong(song);
     setSelectedArrangement(null);
     setEditor(null);
@@ -128,7 +144,7 @@ export default function App() {
   }
 
   async function selectArrangement(arrangement: Arrangement) {
-    if (dirty && !window.confirm('Discard unsaved song changes?')) return;
+    if (dirty && !window.confirm('Nicht gespeicherte Änderungen verwerfen?')) return;
     setSelectedArrangement(arrangement);
     await openArrangement(arrangement);
   }
@@ -142,10 +158,10 @@ export default function App() {
       const sngFiles = files.filter(isSngFile);
       const current = newestFile(sngFiles);
       if (!current) {
-        throw new Error(`Arrangement “${arrangement.name}” has no .sng file.`);
+        throw new Error(`Das Arrangement „${arrangement.name}“ enthält keine .sng-Datei.`);
       }
       const bytes = await api.downloadFile(current);
-      const parsed = decodeSonBeamer(bytes);
+      const parsed = decodeSongBeamer(bytes);
       setEditor({
         file: current,
         document: parsed,
@@ -162,24 +178,24 @@ export default function App() {
   }
 
   async function save() {
-    if (!editor || !selectedArrangement) return;
+    if (!editor || !selectedArrangement || !auth.authenticated) return;
     setSaving(true);
     setError(null);
 
     try {
-      const bytes = serializeSonBeamer(editor.document, editor.lyricsText, editor.verseOrder);
+      const bytes = serializeSongBeamer(editor.document, editor.lyricsText, editor.verseOrder);
       const filesBefore = await api.getArrangementFiles(selectedArrangement.id);
       const oldSngFiles = filesBefore.filter(isSngFile);
       const filename = editor.file.name.toLowerCase().endsWith('.sng')
         ? editor.file.name
-        : `${editor.document.title || 'song'}.sng`;
+        : `${editor.document.title || 'Lied'}.sng`;
 
       const uploaded = await api.uploadArrangementFile(selectedArrangement.id, filename, bytes);
       const staleFiles = oldSngFiles.filter((file) => file.id !== uploaded.id);
       const deleteResults = await Promise.allSettled(staleFiles.map((file) => api.deleteFile(file.id)));
       const failedDeletes = deleteResults.filter((result) => result.status === 'rejected').length;
 
-      const savedDocument = decodeSonBeamer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      const savedDocument = decodeSongBeamer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
       setEditor({
         file: uploaded,
         document: savedDocument,
@@ -190,9 +206,9 @@ export default function App() {
       });
 
       if (failedDeletes > 0) {
-        notify(`Saved. ${failedDeletes} previous .sng file(s) could not be removed.`);
+        notify(`Gespeichert. ${failedDeletes} vorherige .sng-Datei(en) konnten nicht entfernt werden.`);
       } else {
-        notify('Saved to ChurchTools.');
+        notify('In ChurchTools gespeichert.');
       }
     } catch (err) {
       setError(toErrorMessage(err));
@@ -203,7 +219,7 @@ export default function App() {
 
   function reloadEditor() {
     if (!selectedArrangement) return;
-    if (dirty && !window.confirm('Discard unsaved song changes and reload from ChurchTools?')) return;
+    if (dirty && !window.confirm('Nicht gespeicherte Änderungen verwerfen und die Datei aus ChurchTools neu laden?')) return;
     void openArrangement(selectedArrangement);
   }
 
@@ -213,20 +229,20 @@ export default function App() {
         <div className="brand">
           <div className="brand-mark">CT</div>
           <div>
-            <strong>Song Editor</strong>
-            <span>ChurchTools · SonBeamer</span>
+            <strong>Liededitor</strong>
+            <span>ChurchTools · SongBeamer</span>
           </div>
         </div>
-        <ConnectionPanel values={connection} onConnect={connect} busy={loadingSongs} />
+        <ConnectionPanel authenticated={auth.authenticated} configured={auth.configured} onLogin={signIn} onLogout={signOut} busy={authBusy || loadingSongs || loadingArrangements || loadingEditor || saving} />
       </header>
 
       {error ? (
-        <div className="global-alert error-alert">
+        <div className="global-alert error-alert" role="alert">
           <span>{error}</span>
-          <button type="button" onClick={() => setError(null)}>Dismiss</button>
+          <button type="button" onClick={() => setError(null)}>Schließen</button>
         </div>
       ) : null}
-      {message ? <div className="toast">{message}</div> : null}
+      {message ? <div className="toast" role="status">{message}</div> : null}
 
       <div className="workspace">
         <SongBrowser
@@ -245,7 +261,7 @@ export default function App() {
         {loadingEditor ? (
           <main className="editor-pane centered-state">
             <div className="loader" />
-            <h2>Downloading SonBeamer file…</h2>
+            <h2>SongBeamer-Datei wird geladen …</h2>
           </main>
         ) : null}
 
@@ -259,6 +275,7 @@ export default function App() {
             verseOrder={editor.verseOrder}
             dirty={dirty}
             saving={saving}
+            authenticated={auth.authenticated}
             onLyricsChange={(lyricsText) => setEditor((current) => current ? { ...current, lyricsText } : current)}
             onVerseOrderChange={(verseOrder) => setEditor((current) => current ? { ...current, verseOrder } : current)}
             onSave={save}
@@ -269,13 +286,14 @@ export default function App() {
         {!loadingEditor && !editor ? (
           <main className="editor-pane welcome-state">
             <div className="welcome-card">
-              <span className="eyebrow">ChurchTools song library</span>
-              <h1>Select an arrangement to edit its SonBeamer file.</h1>
+              <span className="eyebrow">ChurchTools-Liedbibliothek</span>
+              <h1>{auth.authenticated ? 'Wähle ein Arrangement und bearbeite seine SongBeamer-Datei.' : 'Melde dich mit ChurchTools an, um deine Lieder zu bearbeiten.'}</h1>
               <p>
-                Connect with a ChurchTools login token. Requests are sent through this app&apos;s Cloudflare proxy to <code>nl.church.tools</code>; the editor preserves SonBeamer metadata, lets you split lyrics with <code>---</code>, edit verse order, and previews multilingual alternating lines.
+                Bearbeite Liedtexte, teile sie mit <code>---</code> in Folien auf und lege die Versreihenfolge fest.
+                Die Vorschau zeigt auch mehrsprachige Lieder. Beim Speichern bleiben die SongBeamer-Metadaten erhalten.
               </p>
-              <div className="flow-diagram" aria-label="Workflow">
-                <span>Song</span><b>→</b><span>Arrangement</span><b>→</b><span>.sng editor</span><b>→</b><span>Replace file</span>
+              <div className="flow-diagram" aria-label="Arbeitsablauf">
+                <span>Lied</span><b>→</b><span>Arrangement</span><b>→</b><span>Bearbeiten</span><b>→</b><span>Speichern</span>
               </div>
             </div>
           </main>
@@ -286,5 +304,6 @@ export default function App() {
 }
 
 function toErrorMessage(error: unknown): string {
+  if (error instanceof TypeError) return 'Die Verbindung ist fehlgeschlagen. Bitte prüfe deine Internetverbindung und versuche es erneut.';
   return error instanceof Error ? error.message : String(error);
 }

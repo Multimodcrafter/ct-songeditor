@@ -4,13 +4,13 @@ export type MetadataEntry = {
   raw: string;
 };
 
-export type SonBeamerSlide = {
+export type SongBeamerSlide = {
   id: string;
   label: string;
   lines: string[];
 };
 
-export type ParsedSonBeamer = {
+export type ParsedSongBeamer = {
   metadataLines: string[];
   metadata: MetadataEntry[];
   lyricsText: string;
@@ -42,7 +42,7 @@ function parseMetadata(lines: string[]): MetadataEntry[] {
     });
 }
 
-export function decodeSonBeamer(bytes: ArrayBuffer): ParsedSonBeamer {
+export function decodeSongBeamer(bytes: ArrayBuffer): ParsedSongBeamer {
   const raw = new Uint8Array(bytes);
   const hadUtf8Bom = raw.length >= 3 && raw[0] === 0xef && raw[1] === 0xbb && raw[2] === 0xbf;
   const text = new TextDecoder('utf-8').decode(raw);
@@ -74,7 +74,10 @@ export function decodeSonBeamer(bytes: ArrayBuffer): ParsedSonBeamer {
   };
 }
 
-export function parseSlides(lyricsText: string): SonBeamerSlide[] {
+// SongBeamer's built-in verse markers; arbitrary names use $$M=Name.
+const VERSE_MARKER = /^(?:(?:Intro|Vers|Verse|Strophe|Pre-Bridge|Bridge|Misc|Pre-Refrain|Refrain|Pre-Chorus|Chorus|Pre-Coda|Zwischenspiel|Instrumental|Interlude|Coda|Ending|Ende|Outro|Chor|Solo|Breakdown|Vamp|Turnaround|Tag|Andere|Mittelteil|Schluss|Gesprochen|Oberstimme|Schluss-Chorus|Post-Chorus|Mid-Section|Rap|Spoken Words|Ostinato Refrain|Descant|Unbekannt|Unbenannt|Unknown|Hidden|Invisible|Comment|Title|Copyright)(?: \d+[a-z]?)?|(?:Teil|Part)(?: (?:\d+[a-z]?|[A-Z]))?)$/i;
+
+export function parseSlides(lyricsText: string): SongBeamerSlide[] {
   const normalized = lyricsText.replace(/\r\n/g, '\n');
   const chunks: string[][] = [[]];
 
@@ -86,20 +89,37 @@ export function parseSlides(lyricsText: string): SonBeamerSlide[] {
     }
   }
 
+  let previousLabel = '';
   return chunks
     .map((lines, index) => {
       const firstContent = lines.findIndex((line) => line.trim().length > 0);
       if (firstContent < 0) return null;
-      const label = lines[firstContent].trim();
-      const body = lines.slice(firstContent + 1);
+      const firstLine = lines[firstContent].trim();
+      const customLabel = firstLine.startsWith('$$M=') ? firstLine.slice(4).trim() : '';
+      const explicitLabel = customLabel || (VERSE_MARKER.test(firstLine) ? firstLine : '');
+      const label = explicitLabel || previousLabel;
+      if (explicitLabel) previousLabel = explicitLabel;
+      // A continuation starts with lyrics: keep its first line intact.
+      const body = lines.slice(explicitLabel ? firstContent + 1 : firstContent);
       while (body.length > 0 && body[body.length - 1] === '') body.pop();
       return {
         id: `${index}:${label}`,
         label,
         lines: body,
-      } satisfies SonBeamerSlide;
+      } satisfies SongBeamerSlide;
     })
-    .filter((slide): slide is SonBeamerSlide => slide !== null);
+    .filter((slide): slide is SongBeamerSlide => slide !== null);
+}
+
+export function orderSlides(slides: SongBeamerSlide[], order: string[]): SongBeamerSlide[] {
+  if (!order.length) return slides;
+  const byLabel = new Map<string, SongBeamerSlide[]>();
+  for (const slide of slides) {
+    const group = byLabel.get(slide.label) ?? [];
+    group.push(slide);
+    byLabel.set(slide.label, group);
+  }
+  return order.flatMap((label) => byLabel.get(label) ?? []);
 }
 
 export function groupAlternatingLanguages(lines: string[], langCount: number): string[][] {
@@ -134,8 +154,8 @@ function upsertMetadata(lines: string[], key: string, value: string): string[] {
   return next;
 }
 
-export function serializeSonBeamer(
-  parsed: ParsedSonBeamer,
+export function serializeSongBeamer(
+  parsed: ParsedSongBeamer,
   lyricsText: string,
   verseOrder: string[],
 ): Uint8Array<ArrayBuffer> {
@@ -157,17 +177,16 @@ export function serializeSonBeamer(
 export function validateSongDocument(lyricsText: string, verseOrder: string[]): string[] {
   const slides = parseSlides(lyricsText);
   const warnings: string[] = [];
-  if (!slides.length) warnings.push('No slides were found. Add a slide label and lyrics.');
+  if (!slides.length) warnings.push('Keine Folien gefunden. Füge eine Versmarkierung und Liedtext hinzu.');
 
   const labels = slides.map((slide) => slide.label);
-  const duplicateLabels = labels.filter((label, index) => labels.indexOf(label) !== index);
-  if (duplicateLabels.length) {
-    warnings.push(`Duplicate slide labels: ${[...new Set(duplicateLabels)].join(', ')}`);
+  if (verseOrder.length && slides.some((slide) => !slide.label)) {
+    warnings.push('Folien vor der ersten Versmarkierung haben keine Zuordnung und werden bei einer festgelegten Versreihenfolge nicht angezeigt.');
   }
 
   const missing = verseOrder.filter((label) => !labels.includes(label));
   if (missing.length) {
-    warnings.push(`Verse order references missing slides: ${[...new Set(missing)].join(', ')}`);
+    warnings.push(`Versreihenfolge verweist auf fehlende Folien: ${[...new Set(missing)].join(', ')}`);
   }
   return warnings;
 }

@@ -5,11 +5,11 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
+      '/auth': {
+        target: 'http://127.0.0.1:8788',
+      },
       '/ct-proxy': {
-        target: 'https://nl.church.tools',
-        changeOrigin: true,
-        secure: true,
-        rewrite: (path) => path.replace(/^\/ct-proxy/, ''),
+        target: 'http://127.0.0.1:8788',
       },
     },
   },

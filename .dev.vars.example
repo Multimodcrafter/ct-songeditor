@@ -1,0 +1,6 @@
+# ChurchTools: Systemeinstellungen > Login > OAuth-Client hinzufügen
+CHURCHTOOLS_CLIENT_ID=""
+# Optional; nur setzen, wenn für diesen OAuth-Client eingerichtet.
+CHURCHTOOLS_CLIENT_SECRET=""
+# Mindestens 32 zufällige Zeichen; nur auf dem Server verwenden.
+SESSION_SECRET=""

@@ -5,6 +5,7 @@ type Props = {
 };
 
 export default function VerseOrderEditor({ order, labels, onChange }: Props) {
+  const choices = [...new Set(labels)].filter(Boolean);
   function update(index: number, value: string) {
     const next = [...order];
     next[index] = value;
@@ -24,34 +25,33 @@ export default function VerseOrderEditor({ order, labels, onChange }: Props) {
   }
 
   function add() {
-    onChange([...order, labels[0] ?? '']);
+    if (choices.length) onChange([...order, choices[0]]);
   }
 
   return (
     <div className="verse-order-editor">
       <div className="order-list">
         {order.length === 0 ? (
-          <div className="empty-inline">No verse order. Slides preview in file order.</div>
+          <div className="empty-inline">Keine Versreihenfolge festgelegt. Die Vorschau folgt der Reihenfolge in der Datei.</div>
         ) : null}
         {order.map((item, index) => (
           <div className="order-row" key={`${index}-${item}`}>
             <span className="order-number">{index + 1}</span>
-            <input
+            <select
               value={item}
               onChange={(event) => update(index, event.target.value)}
-              list="slide-labels"
-              aria-label={`Verse order item ${index + 1}`}
-            />
-            <button type="button" className="icon-button" onClick={() => move(index, -1)} disabled={index === 0} aria-label="Move up">↑</button>
-            <button type="button" className="icon-button" onClick={() => move(index, 1)} disabled={index === order.length - 1} aria-label="Move down">↓</button>
-            <button type="button" className="icon-button danger" onClick={() => remove(index)} aria-label="Remove">×</button>
+              aria-label={`Vers ${index + 1} in der Reihenfolge`}
+            >
+              {!choices.includes(item) ? <option value={item} disabled>{item || 'Ohne Markierung'} (fehlt)</option> : null}
+              {choices.map((label) => <option value={label} key={label}>{label}</option>)}
+            </select>
+            <button type="button" className="icon-button" onClick={() => move(index, -1)} disabled={index === 0} aria-label="Nach oben">↑</button>
+            <button type="button" className="icon-button" onClick={() => move(index, 1)} disabled={index === order.length - 1} aria-label="Nach unten">↓</button>
+            <button type="button" className="icon-button danger" onClick={() => remove(index)} aria-label="Entfernen">×</button>
           </div>
         ))}
       </div>
-      <datalist id="slide-labels">
-        {labels.map((label) => <option value={label} key={label} />)}
-      </datalist>
-      <button type="button" className="secondary small" onClick={add}>+ Add item</button>
+      <button type="button" className="secondary small" onClick={add} disabled={!choices.length}>+ Vers hinzufügen</button>
     </div>
   );
 }

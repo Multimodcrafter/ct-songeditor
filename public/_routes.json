@@ -1,5 +1,5 @@
 {
   "version": 1,
-  "include": ["/ct-proxy/*"],
+  "include": ["/ct-proxy/*", "/auth/*"],
   "exclude": []
 }
