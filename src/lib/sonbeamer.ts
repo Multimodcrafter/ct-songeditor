@@ -138,7 +138,7 @@ export function serializeSonBeamer(
   parsed: ParsedSonBeamer,
   lyricsText: string,
   verseOrder: string[],
-): Uint8Array {
+): Uint8Array<ArrayBuffer> {
   let metadataLines = [...parsed.metadataLines];
   metadataLines = upsertMetadata(metadataLines, 'VerseOrder', verseOrder.join(','));
 

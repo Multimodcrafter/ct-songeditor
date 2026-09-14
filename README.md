@@ -51,11 +51,27 @@ The token is not compiled into the site, stored in Cloudflare configuration, or 
 
 ## Local development
 
-Install dependencies and run Vite:
+With Nix installed and flakes enabled, enter the development shell, install the
+locked dependencies, and run Vite:
 
 ```bash
-npm install
+nix develop
+npm ci
 npm run dev
+```
+
+The flake provides Node.js 24 (including npm), Git, and the `workerd` runtime.
+It supports x86-64/ARM64 Linux and Apple Silicon macOS.
+Vite, TypeScript, and Wrangler are installed by `npm ci`. The shell points
+Wrangler at a Nix-patched runtime matching `package-lock.json` so local Pages
+Functions work on NixOS. `flake.lock` pins the Nix tools and
+`package-lock.json` pins the JavaScript dependencies. Without Nix, install
+Node.js 24 and run the same npm commands.
+
+To check the production build from the development environment:
+
+```bash
+nix develop --command npm run build
 ```
 
 For fast local development, Vite proxies `/ct-proxy/*` directly to `https://nl.church.tools` using the same URL layout as production.
