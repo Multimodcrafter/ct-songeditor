@@ -168,3 +168,49 @@ test('same-origin uploads keep their method and multipart body', async () => {
   const response = await proxy({ env, params: { path: ['api', 'files', 'song_arrangement', '1'] }, request: request('/ct-proxy/api/files/song_arrangement/1', { method: 'POST', headers: { Cookie, Origin: origin }, body }) });
   assert.equal(response.status, 200);
 });
+
+test('callback logs every failure with upstream diagnostics and redacts credentials', async () => {
+  const { loginCookie, url } = await start();
+  const state = url.searchParams.get('state');
+  const logs = mock.method(console, 'error', () => {});
+  let upstream;
+  mock.method(globalThis, 'fetch', async () => {
+    if (upstream instanceof Error) throw upstream;
+    return upstream;
+  });
+  const invoke = (query, config = env) => auth({
+    env: config,
+    request: request(`/auth/callback?${query}`, { headers: { Cookie: loginCookie } }),
+  });
+  const lastLog = () => JSON.parse(logs.mock.calls.at(-1).arguments[1]);
+  await invoke('', {});
+  assert.equal(lastLog().error, 'configuration');
+  await invoke('state=wrong&code=secret-code');
+  assert.equal(lastLog().stateMatches, false);
+  await invoke(`state=${state}`);
+  assert.equal(lastLog().codePresent, false);
+  await invoke(`state=${state}&error=access_denied&error_description=Consent+refused`);
+  assert.equal(lastLog().providerDescription, 'Consent refused');
+
+  for (const [body, status, expected] of [
+    ['<html>CT unavailable</html>', 502, 'exchange_failed'],
+    ['{"error":"invalid_grant","error_description":"secret-code rejected"}', 400, 'exchange_failed'],
+    ['not JSON', 200, 'exchange_failed'],
+    ['{"access_token":"private-token","refresh_token":"private-refresh","scope":"profile"}', 200, 'invalid_token'],
+  ]) {
+    upstream = new Response(body, { status, headers: { 'Content-Type': 'text/plain' } });
+    const response = await invoke(`state=${state}&code=secret-code`);
+    assert.equal(response.headers.get('Location'), `/?auth_error=${expected}`);
+    const log = lastLog();
+    assert.equal(log.error, expected);
+    assert.equal(log.upstream.status, status);
+    assert.equal(log.upstream.contentType, 'text/plain');
+    assert.equal(log.upstream.body, body.replaceAll('secret-code', '[redacted]').replaceAll('private-token', '[redacted]').replaceAll('private-refresh', '[redacted]'));
+    assert.doesNotMatch(logs.mock.calls.at(-1).arguments[1], /secret-code|private-token|private-refresh/);
+  }
+  upstream = new Error('CT connection failed');
+  await invoke(`state=${state}&code=secret-code`);
+  assert.deepEqual(lastLog().exception, { name: 'Error', message: 'CT connection failed' });
+  assert.equal(lastLog().upstream, undefined);
+  assert.equal(logs.mock.callCount(), 9);
+});

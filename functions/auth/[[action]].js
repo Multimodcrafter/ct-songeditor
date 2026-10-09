@@ -37,22 +37,51 @@ export async function onRequest({ request, env }) {
 
 async function callback(request, env) {
   const url = new URL(request.url);
+  const secrets = [env.CHURCHTOOLS_CLIENT_SECRET, env.SESSION_SECRET,
+    ...url.searchParams.getAll('code'), ...url.searchParams.getAll('state')];
+  let upstream;
   const headers = new Headers({
     'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
     'Set-Cookie': cookie(request, LOGIN_COOKIE, '', 0),
   });
-  function finish(error) {
+  function finish(error, details = {}) {
+    if (error) {
+      const diagnostic = JSON.stringify({ error, ...details, upstream }, (key, value) => {
+        if (/^(access_token|refresh_token|id_token|client_secret|code_verifier)$/i.test(key)) return '[redacted]';
+        if (typeof value !== 'string') return value;
+        let text = value.replace(/("(?:access_token|refresh_token|id_token|client_secret|code_verifier)"\s*:\s*")((?:\\.|[^"\\])*)("|$)/gi, '$1[redacted]$3');
+        for (const secret of secrets) {
+          if (secret) text = text.replaceAll(secret, '[redacted]');
+        }
+        return text;
+      });
+      console.error('ChurchTools OAuth callback failed', diagnostic);
+    }
     headers.set('Location', error ? `/?auth_error=${error}` : '/');
     return new Response(null, { status: 303, headers });
   }
-  if (!configured(env)) return finish('configuration');
+  if (!configured(env)) return finish('configuration', {
+    clientIdConfigured: Boolean(env.CHURCHTOOLS_CLIENT_ID?.trim()),
+    sessionSecretConfigured: Boolean(env.SESSION_SECRET?.length >= 32),
+  });
   const pending = await readCookie(request, LOGIN_COOKIE, env);
+  secrets.push(pending?.state, pending?.verifier);
   if (pending?.purpose !== 'login' || url.searchParams.getAll('state').length !== 1
     || pending.state !== url.searchParams.get('state')
-    || pending.redirectUri !== new URL('/auth/callback', url.origin).href) return finish('invalid_state');
-  if (url.searchParams.has('error')) return finish('denied');
+    || pending.redirectUri !== new URL('/auth/callback', url.origin).href) return finish('invalid_state', {
+    validLoginCookie: pending?.purpose === 'login',
+    stateCount: url.searchParams.getAll('state').length,
+    stateMatches: pending?.state === url.searchParams.get('state'),
+    redirectUriMatches: pending?.redirectUri === new URL('/auth/callback', url.origin).href,
+  });
+  if (url.searchParams.has('error')) return finish('denied', {
+    providerError: url.searchParams.get('error'),
+    providerDescription: url.searchParams.get('error_description'),
+  });
   const code = url.searchParams.get('code');
-  if (!code || url.searchParams.getAll('code').length !== 1) return finish('invalid_state');
+  if (!code || url.searchParams.getAll('code').length !== 1) return finish('invalid_state', {
+    codePresent: Boolean(code), codeCount: url.searchParams.getAll('code').length,
+  });
 
   try {
     const body = new URLSearchParams({
@@ -64,8 +93,10 @@ async function callback(request, env) {
       method: 'POST', headers: { Accept: 'application/json' }, body,
       redirect: 'error', signal: AbortSignal.timeout(15_000),
     });
+    upstream = { status: response.status, statusText: response.statusText, contentType: response.headers.get('Content-Type') };
+    upstream.body = await response.text();
     if (!response.ok) return finish('exchange_failed');
-    const token = await response.json();
+    const token = JSON.parse(upstream.body);
     const lifetime = Math.min(Number(token.expires_in ?? 3600), 8 * 60 * 60);
     if (typeof token.access_token !== 'string' || !token.access_token || /\s/.test(token.access_token)
       || !Number.isFinite(lifetime) || lifetime <= 0
@@ -76,7 +107,7 @@ async function callback(request, env) {
     const value = await seal({ purpose: 'session', accessToken: token.access_token, expiresAt: Date.now() + lifetime * 1000 }, env);
     headers.append('Set-Cookie', cookie(request, SESSION_COOKIE, value, Math.floor(lifetime)));
     return finish();
-  } catch {
-    return finish('exchange_failed');
+  } catch (error) {
+    return finish('exchange_failed', { exception: { name: error?.name, message: error?.message } });
   }
 }
