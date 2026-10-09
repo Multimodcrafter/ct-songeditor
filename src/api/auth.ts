@@ -2,6 +2,7 @@ export type AuthSession = { authenticated: boolean; configured: boolean };
 
 async function authRequest(path: string, method = 'GET') {
   const response = await fetch(`/auth/${path}`, { method, credentials: 'same-origin' });
+  console.debug(`authRequest ${path}: ${response.status}`, await response.clone().text());
   if (!response.headers.get('Content-Type')?.includes('application/json')) {
     throw new Error('Die Anmeldung ist derzeit nicht erreichbar. Bitte versuche es erneut.');
   }
