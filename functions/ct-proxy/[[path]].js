@@ -41,6 +41,22 @@ export async function onRequest(context) {
 
   try {
     let upstream = await fetch(targetUrl, init);
+    if ([401, 403].includes(upstream.status) && ['GET', 'HEAD'].includes(request.method)
+      && targetUrl.pathname === '/' && targetUrl.searchParams.get('q') === 'public/filedownload') {
+      // The legacy download route may not recognize OAuth Bearer authentication.
+      const apiInit = { headers: { Authorization: `Bearer ${current.accessToken}`, Accept: 'application/json' }, redirect: 'manual' };
+      const identity = await fetch(`${CHURCHTOOLS_ORIGIN}/api/whoami?only_allow_authenticated=true`, apiInit);
+      if (!identity.ok) return json({ error: 'ChurchTools konnte die Anmeldung für den Download nicht bestätigen.' }, identity.status === 401 ? 401 : 502);
+      const personId = (await identity.json()).data?.id;
+      if (!Number.isSafeInteger(personId) || personId <= 0) throw new Error('Invalid ChurchTools person ID');
+      const credential = await fetch(`${CHURCHTOOLS_ORIGIN}/api/persons/${personId}/logintoken`, apiInit);
+      if (!credential.ok) return json({ error: 'ChurchTools konnte den Dateizugriff nicht autorisieren.' }, credential.status === 401 ? 401 : credential.status === 403 ? 403 : 502);
+      const loginToken = (await credential.json()).data;
+      if (typeof loginToken !== 'string' || !loginToken || /\s/.test(loginToken)) throw new Error('Invalid ChurchTools login token');
+      headers.set('Authorization', `Login ${loginToken}`);
+      await upstream.body?.cancel();
+      upstream = await fetch(targetUrl, init);
+    }
     let currentUrl = targetUrl;
     for (let redirects = 0; upstream.status >= 300 && upstream.status < 400 && upstream.headers.has('Location'); redirects++) {
       const next = new URL(upstream.headers.get('Location'), currentUrl);

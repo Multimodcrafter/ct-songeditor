@@ -131,9 +131,11 @@ export class ChurchToolsApi {
     const response = await fetch(`${PROXY_BASE}${upstream.pathname}${upstream.search}`, {
       credentials: 'same-origin',
     });
-    this.checkAuthentication(response);
+    // Legacy downloads can reject authentication while the API session is still valid.
+    if (response.status === 401) await this.request('/whoami?only_allow_authenticated=true');
     if (!response.ok) {
-      throw new Error(`Die Datei „${file.name}“ konnte nicht heruntergeladen werden (Status ${response.status}).`);
+      const detail = response.headers.get('Content-Type')?.includes('text/plain') ? (await response.text()).trim() : '';
+      throw new Error(`Die Datei „${file.name}“ konnte nicht heruntergeladen werden (Status ${response.status}).${detail ? ` ChurchTools: ${detail}` : ''}`);
     }
     return response.arrayBuffer();
   }

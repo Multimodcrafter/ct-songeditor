@@ -43,6 +43,11 @@ proxy forwards them as `Authorization: Bearer <access_token>`. No credentials ar
 exposed to frontend JavaScript. Mutating routes require the same-origin `Origin`
 header; upstream cookies are stripped and cross-origin redirects are rejected.
 
+Legacy file downloads that reject OAuth are retried server-side with the current
+user's ChurchTools Login token, retrieved through the OAuth-authenticated API.
+ChurchTools may create that persistent token if none exists. The editor neither
+stores it nor exposes it to the browser or places it in a URL.
+
 Sessions expire with the access token, after at most eight hours. The user is
 prompted to log in again when the session expires; tokens are not refreshed
 automatically. **Abmelden** clears the editor's session, leaving the ChurchTools

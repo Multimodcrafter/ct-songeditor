@@ -230,3 +230,68 @@ test('callback logs every failure with upstream diagnostics and redacts credenti
   assert.equal(lastLog().upstream, undefined);
   assert.equal(logs.mock.callCount(), 9);
 });
+
+test('legacy downloads retry with the current user Login token kept server-side', async () => {
+  const Cookie = await loggedInCookie();
+  const query = '?q=public%2Ffiledownload&id=7&filename=hash';
+  const calls = mock.method(globalThis, 'fetch', async (target, init) => {
+    const count = calls.mock.callCount() + 1;
+    assert.equal(init.redirect, 'manual');
+    assert.equal(new Headers(init.headers).get('Cookie'), null);
+    if (count <= 3) assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer private-access-token');
+    if (count === 1) {
+      assert.equal(String(target), `${CHURCHTOOLS_ORIGIN}/${query}`);
+      return new Response('Insufficient permission. You need the permission "song_arrangement".', { status: 401 });
+    }
+    if (count === 2) {
+      assert.equal(String(target), `${CHURCHTOOLS_ORIGIN}/api/whoami?only_allow_authenticated=true`);
+      return Response.json({ data: { id: 42 } });
+    }
+    if (count === 3) {
+      assert.equal(String(target), `${CHURCHTOOLS_ORIGIN}/api/persons/42/logintoken`);
+      return Response.json({ data: 'private-login-token' });
+    }
+    assert.equal(count, 4);
+    assert.equal(String(target), `${CHURCHTOOLS_ORIGIN}/${query}`);
+    assert.equal(init.headers.get('Authorization'), 'Login private-login-token');
+    return new Response('#Title=Test\n---\nLyrics', { headers: { 'Set-Cookie': 'ct=private' } });
+  });
+  const response = await proxy({ env, params: { path: [] }, request: request(`/ct-proxy/${query}`, { headers: { Cookie } }) });
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), '#Title=Test\n---\nLyrics');
+  assert.equal(response.headers.get('Set-Cookie'), null);
+  assert.equal(calls.mock.callCount(), 4);
+});
+
+test('legacy download credential failures and redirects fail closed', async () => {
+  const Cookie = await loggedInCookie();
+  for (const [identity, credential, retry, status, count] of [
+    [new Response(null, { status: 401 }), null, null, 401, 2],
+    [new Response(null, { status: 302, headers: { Location: 'https://evil.example' } }), null, null, 502, 2],
+    [Response.json({ data: { id: '../other' } }), null, null, 502, 2],
+    [Response.json({ data: { id: 42 } }), new Response(null, { status: 403 }), null, 403, 3],
+    [Response.json({ data: { id: 42 } }), new Response(null, { status: 302, headers: { Location: 'https://evil.example' } }), null, 502, 3],
+    [Response.json({ data: { id: 42 } }), Response.json({ data: 'bad\ntoken' }), null, 502, 3],
+    [Response.json({ data: { id: 42 } }), Response.json({ data: 'private-login-token' }), new Response(null, { status: 302, headers: { Location: 'https://evil.example' } }), 502, 4],
+    [Response.json({ data: { id: 42 } }), Response.json({ data: 'private-login-token' }), new Response('Still denied', { status: 403 }), 403, 4],
+  ]) {
+    const responses = [new Response('Permission denied', { status: 403 }), identity, credential, retry];
+    const calls = mock.method(globalThis, 'fetch', async (target) => {
+      assert.equal(new URL(target).origin, CHURCHTOOLS_ORIGIN);
+      return responses.shift();
+    });
+    const response = await proxy({ env, params: { path: [] }, request: request('/ct-proxy/?q=public/filedownload&id=7&filename=hash', { headers: { Cookie } }) });
+    assert.equal(response.status, status);
+    assert.equal(calls.mock.callCount(), count);
+    assert.doesNotMatch(await response.text(), /private-login-token|private-access-token/);
+    mock.restoreAll();
+  }
+});
+
+test('ordinary API authorization failures do not request a Login token', async () => {
+  const Cookie = await loggedInCookie();
+  const calls = mock.method(globalThis, 'fetch', async () => new Response('Unauthorized', { status: 401 }));
+  const response = await proxy({ env, params: { path: ['api', 'songs'] }, request: request('/ct-proxy/api/songs', { headers: { Cookie } }) });
+  assert.equal(response.status, 401);
+  assert.equal(calls.mock.callCount(), 1);
+});

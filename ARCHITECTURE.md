@@ -19,6 +19,14 @@ The proxy is constrained to the fixed upstream origin `https://nl.church.tools`
 and requires an encrypted session cookie on every request. It attaches the OAuth
 access token server-side as `Authorization: Bearer …`.
 
+If the legacy `/?q=public/filedownload` route rejects OAuth with 401/403, the
+proxy uses `/api/whoami?only_allow_authenticated=true` and the current person's
+`/api/persons/{id}/logintoken` to retry with `Authorization: Login …`. ChurchTools
+may create this persistent credential if absent; the editor uses it only for the
+current download, without caching it or returning it to the browser. Redirects
+from these credential lookups are rejected. File-download failures only mark the
+UI session expired when an authenticated API check also returns 401.
+
 ## API mapping
 
 The frontend uses these ChurchTools REST resources from the supplied OpenAPI document:
