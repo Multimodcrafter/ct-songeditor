@@ -231,13 +231,13 @@ test('callback logs every failure with upstream diagnostics and redacts credenti
   assert.equal(logs.mock.callCount(), 9);
 });
 
-test('legacy downloads retry with the current user Login token kept server-side', async () => {
+test('legacy downloads establish a server-side cookie session after the Login token retry', async () => {
   const Cookie = await loggedInCookie();
   const query = '?q=public%2Ffiledownload&id=7&filename=hash';
   const calls = mock.method(globalThis, 'fetch', async (target, init) => {
     const count = calls.mock.callCount() + 1;
     assert.equal(init.redirect, 'manual');
-    assert.equal(new Headers(init.headers).get('Cookie'), null);
+    if (count <= 4) assert.equal(new Headers(init.headers).get('Cookie'), null);
     if (count <= 3) assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer private-access-token');
     if (count === 1) {
       assert.equal(String(target), `${CHURCHTOOLS_ORIGIN}/${query}`);
@@ -251,16 +251,21 @@ test('legacy downloads retry with the current user Login token kept server-side'
       assert.equal(String(target), `${CHURCHTOOLS_ORIGIN}/api/persons/42/logintoken`);
       return Response.json({ data: 'private-login-token' });
     }
-    assert.equal(count, 4);
     assert.equal(String(target), `${CHURCHTOOLS_ORIGIN}/${query}`);
     assert.equal(init.headers.get('Authorization'), 'Login private-login-token');
+    if (count === 4) return new Response(null, { status: 302, headers: {
+      Location: `${CHURCHTOOLS_ORIGIN}/${query}`,
+      'Set-Cookie': 'ct_session=private-session; Path=/; Secure; HttpOnly',
+    } });
+    assert.equal(count, 5);
+    assert.equal(init.headers.get('Cookie'), 'ct_session=private-session');
     return new Response('#Title=Test\n---\nLyrics', { headers: { 'Set-Cookie': 'ct=private' } });
   });
   const response = await proxy({ env, params: { path: [] }, request: request(`/ct-proxy/${query}`, { headers: { Cookie } }) });
   assert.equal(response.status, 200);
   assert.equal(await response.text(), '#Title=Test\n---\nLyrics');
   assert.equal(response.headers.get('Set-Cookie'), null);
-  assert.equal(calls.mock.callCount(), 4);
+  assert.equal(calls.mock.callCount(), 5);
 });
 
 test('legacy download credential failures and redirects fail closed', async () => {
@@ -318,4 +323,55 @@ test('blocked redirects log the reason and origins without URL credentials or si
     assert.doesNotMatch(JSON.stringify(details), /secret|private-|signature/);
     mock.restoreAll();
   }
+});
+
+test('redirect cookies are merged and replaced, and never shared across proxy requests', async () => {
+  const Cookie = await loggedInCookie();
+  let step = 0;
+  mock.method(globalThis, 'fetch', async (_target, init) => {
+    switch (step++ % 3) {
+      case 0:
+        assert.equal(init.headers.get('Cookie'), null);
+        return new Response(null, { status: 302, headers: [
+          ['Location', '/download'],
+          ['Set-Cookie', 'session=old; Path=/; HttpOnly; Secure'],
+          ['Set-Cookie', 'route=one; Expires=Wed, 21 Oct 2037 07:28:00 GMT; Path=/'],
+        ] });
+      case 1:
+        assert.equal(init.headers.get('Cookie'), 'session=old; route=one');
+        return new Response(null, { status: 302, headers: {
+          Location: '/download', 'Set-Cookie': 'session=new==; Path=/; HttpOnly; Secure',
+        } });
+      case 2:
+        assert.equal(init.headers.get('Cookie'), 'session=new==; route=one');
+        return new Response('Song content', { headers: { 'Set-Cookie': 'session=final; Path=/' } });
+    }
+  });
+  for (let i = 0; i < 2; i++) {
+    const response = await proxy({ env, params: { path: ['download'] }, request: request('/ct-proxy/download', { headers: { Cookie } }) });
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'Song content');
+    assert.equal(response.headers.get('Set-Cookie'), null);
+  }
+  assert.equal(step, 6);
+});
+
+test('a redirect chain with upstream cookies still rejects a foreign destination', async () => {
+  const Cookie = await loggedInCookie();
+  mock.method(console, 'error', () => {});
+  let count = 0;
+  mock.method(globalThis, 'fetch', async (target, init) => {
+    assert.equal(new URL(target).origin, CHURCHTOOLS_ORIGIN);
+    count++;
+    if (count === 1) return new Response(null, { status: 302, headers: {
+      Location: '/download', 'Set-Cookie': 'session=private; Path=/',
+    } });
+    assert.equal(count, 2);
+    assert.equal(init.headers.get('Cookie'), 'session=private');
+    return new Response(null, { status: 302, headers: { Location: 'https://evil.example/download' } });
+  });
+  const response = await proxy({ env, params: { path: ['download'] }, request: request('/ct-proxy/download', { headers: { Cookie } }) });
+  assert.equal(response.status, 502);
+  assert.equal(count, 2);
+  assert.equal(response.headers.get('Set-Cookie'), null);
 });

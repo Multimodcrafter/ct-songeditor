@@ -42,6 +42,8 @@ an AES-GCM encrypted `HttpOnly`, `SameSite=Lax` cookie (`Secure` on HTTPS), and 
 proxy forwards them as `Authorization: Bearer <access_token>`. No credentials are
 exposed to frontend JavaScript. Mutating routes require the same-origin `Origin`
 header; upstream cookies are stripped and cross-origin redirects are rejected.
+Cookies set during download redirects are used only server-side within that
+request's redirect chain, allowing ChurchTools to establish its download session.
 
 Legacy file downloads that reject OAuth are retried server-side with the current
 user's ChurchTools Login token, retrieved through the OAuth-authenticated API.

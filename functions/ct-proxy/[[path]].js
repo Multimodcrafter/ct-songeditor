@@ -58,6 +58,7 @@ export async function onRequest(context) {
       upstream = await fetch(targetUrl, init);
     }
     let currentUrl = targetUrl;
+    const redirectCookies = new Map();
     for (let redirects = 0; upstream.status >= 300 && upstream.status < 400 && upstream.headers.has('Location'); redirects++) {
       const next = new URL(upstream.headers.get('Location'), currentUrl);
       if (next.origin !== CHURCHTOOLS_ORIGIN || redirects >= 4 || !['GET', 'HEAD'].includes(request.method)) {
@@ -73,6 +74,14 @@ export async function onRequest(context) {
         });
         return json({ error: 'Unsichere Weiterleitung von ChurchTools abgelehnt.' }, 502);
       }
+      // Keep the ChurchTools session only within this fixed-origin redirect chain.
+      for (const value of upstream.headers.getSetCookie()) {
+        const pair = value.split(';', 1)[0];
+        const separator = pair.indexOf('=');
+        if (separator > 0) redirectCookies.set(pair.slice(0, separator).trim(), pair);
+      }
+      if (redirectCookies.size) headers.set('Cookie', [...redirectCookies.values()].join('; '));
+      await upstream.body?.cancel();
       currentUrl = next;
       upstream = await fetch(currentUrl, init);
     }

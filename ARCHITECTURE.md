@@ -64,7 +64,10 @@ assets. `CHURCHTOOLS_CLIENT_ID` identifies the registered client, and optional
 
 All mutating application requests must carry a matching Origin header. The proxy
 ignores browser-supplied Authorization headers, removes upstream Set-Cookie, and
-follows download redirects only within the fixed ChurchTools origin. Tokens are
+follows download redirects only within the fixed ChurchTools origin. Cookies set
+during redirects are retained server-side for that request's redirect chain so
+legacy downloads can establish a ChurchTools session. They are neither sent to
+the browser nor shared between requests. Tokens are
 never returned in a JSON response or URL. See README for provider registration.
 
 ## Cloudflare Pages routing
