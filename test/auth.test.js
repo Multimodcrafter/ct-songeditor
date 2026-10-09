@@ -295,3 +295,27 @@ test('ordinary API authorization failures do not request a Login token', async (
   assert.equal(response.status, 401);
   assert.equal(calls.mock.callCount(), 1);
 });
+
+test('blocked redirects log the reason and origins without URL credentials or signatures', async () => {
+  const Cookie = await loggedInCookie();
+  for (const [location, reason, count] of [
+    ['https://user:secret@storage.example/private-file?signature=private-signature', 'foreign_origin', 1],
+    [`${CHURCHTOOLS_ORIGIN}/download?signature=private-signature`, 'redirect_limit', 5],
+  ]) {
+    const logs = mock.method(console, 'error', () => {});
+    const calls = mock.method(globalThis, 'fetch', async () => new Response(null, { status: 302, headers: {
+      Location: location, 'Set-Cookie': 'session=private-cookie',
+    } }));
+    const response = await proxy({ env, params: { path: ['download'] }, request: request('/ct-proxy/download', { headers: { Cookie } }) });
+    assert.equal(response.status, 502);
+    assert.equal(calls.mock.callCount(), count);
+    const [message, details] = logs.mock.calls[0].arguments;
+    assert.equal(message, 'ChurchTools proxy redirect rejected');
+    assert.equal(details.reason, reason);
+    assert.equal(details.toOrigin, new URL(location).origin);
+    assert.equal(details.redirectsFollowed, count - 1);
+    assert.equal(details.setsCookie, true);
+    assert.doesNotMatch(JSON.stringify(details), /secret|private-|signature/);
+    mock.restoreAll();
+  }
+});

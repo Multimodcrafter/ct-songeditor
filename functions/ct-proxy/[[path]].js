@@ -61,6 +61,16 @@ export async function onRequest(context) {
     for (let redirects = 0; upstream.status >= 300 && upstream.status < 400 && upstream.headers.has('Location'); redirects++) {
       const next = new URL(upstream.headers.get('Location'), currentUrl);
       if (next.origin !== CHURCHTOOLS_ORIGIN || redirects >= 4 || !['GET', 'HEAD'].includes(request.method)) {
+        console.error('ChurchTools proxy redirect rejected', {
+          reason: next.origin !== CHURCHTOOLS_ORIGIN ? 'foreign_origin' : redirects >= 4 ? 'redirect_limit' : 'unsafe_method',
+          status: upstream.status,
+          method: request.method,
+          fromOrigin: currentUrl.origin,
+          toOrigin: next.origin,
+          redirectsFollowed: redirects,
+          sameUrl: next.href === currentUrl.href,
+          setsCookie: upstream.headers.has('Set-Cookie'),
+        });
         return json({ error: 'Unsichere Weiterleitung von ChurchTools abgelehnt.' }, 502);
       }
       currentUrl = next;
