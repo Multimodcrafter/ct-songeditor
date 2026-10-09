@@ -91,7 +91,7 @@ async function callback(request, env) {
     if (env.CHURCHTOOLS_CLIENT_SECRET) body.set('client_secret', env.CHURCHTOOLS_CLIENT_SECRET);
     const response = await fetch(`${CHURCHTOOLS_ORIGIN}/oauth/access_token`, {
       method: 'POST', headers: { Accept: 'application/json' }, body,
-      redirect: 'error', signal: AbortSignal.timeout(15_000),
+      redirect: 'manual', signal: AbortSignal.timeout(15_000),
     });
     upstream = { status: response.status, statusText: response.statusText, contentType: response.headers.get('Content-Type') };
     upstream.body = await response.text();

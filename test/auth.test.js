@@ -42,6 +42,7 @@ test('callback exchanges the code server-side and sets a private session usable 
   const fetchMock = mock.method(globalThis, 'fetch', async (target, options) => {
     assert.equal(target, `${CHURCHTOOLS_ORIGIN}/oauth/access_token`);
     assert.equal(options.method, 'POST');
+    assert.equal(options.redirect, 'manual');
     assert.equal(options.body.get('grant_type'), 'authorization_code');
     assert.equal(options.body.get('code'), 'single-use-code');
     assert.equal(options.body.get('redirect_uri'), `${origin}/auth/callback`);
@@ -61,6 +62,21 @@ test('callback exchanges the code server-side and sets a private session usable 
   assert.equal((await session(sessionRequest, env)).accessToken, 'private-access-token');
   const status = await auth({ env, request: sessionRequest });
   assert.deepEqual(await status.json(), { authenticated: true, configured: true });
+});
+
+test('callback rejects token endpoint redirects without forwarding credentials', async () => {
+  const { loginCookie, url } = await start();
+  const logs = mock.method(console, 'error', () => {});
+  const calls = mock.method(globalThis, 'fetch', async (target, options) => {
+    assert.equal(target, `${CHURCHTOOLS_ORIGIN}/oauth/access_token`);
+    assert.equal(options.redirect, 'manual');
+    return new Response(null, { status: 307, headers: { Location: 'https://evil.example/token' } });
+  });
+  const response = await auth({ env, request: request(`/auth/callback?code=x&state=${url.searchParams.get('state')}`, { headers: { Cookie: loginCookie } }) });
+  assert.equal(response.headers.get('Location'), '/?auth_error=exchange_failed');
+  assert.equal(cookiePair(response, SESSION_COOKIE), undefined);
+  assert.equal(calls.mock.callCount(), 1);
+  assert.equal(JSON.parse(logs.mock.calls[0].arguments[1]).upstream.status, 307);
 });
 
 test('missing, mismatched, expired and duplicate OAuth state never trigger an exchange', async () => {
